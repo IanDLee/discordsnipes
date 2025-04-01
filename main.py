@@ -7,9 +7,6 @@ from discord import app_commands
 from replit import db
 from replit.database import default_db
 
-HUNTING_SZN_MULT = 2
-ADMIN_ID = 1345151251037425694
-
 # increment user out value
 def increment_out(user: discord.Member):
   user_key = db_get_user_key(user)
@@ -32,9 +29,7 @@ def raw_snipe_value(out_count, in_count):
 # get raw (pre multiplier) value for a user
 def get_raw_user_value(user: discord.Member):
   user_key = db_get_user_key(user)
-  print(user_key)
   val = db[user_key]
-  print(val)
   return raw_snipe_value(val['out'], val['in'])
 
 # get the current hunting season
@@ -53,6 +48,7 @@ def is_szn_target(target: discord.Member):
 
 # log snipe (update snipe stats after snipe)
 def log_snipe(sniper: discord.Member, target: discord.Member):
+  HUNTING_SZN_MULT = 2
   value = get_raw_user_value(target)
   multiplier = 1
   if is_szn_target(target):
@@ -102,10 +98,9 @@ def get_leaderboard():
     if key == 'szn':
       continue
     if db[key]['points'] > 0:
+      print(key)
       # retrieve nickname from user id
-      user = bot.get_user(key)
-      if user is not None:
-        leaderboard.append((user.display_name, db[key]['points']))
+      leaderboard.append((key, db[key]['points']))
   leaderboard.sort(key=lambda x: x[1], reverse=True)
   return leaderboard[:10]
 
@@ -116,22 +111,29 @@ def cleardb():
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
-
+# bot startup code
 @bot.event
 async def on_ready():
   print('Bot is running!')
+  id = os.getenv('SERVER_ID')
+  if id is None:
+    print('Missing SERVER_ID environment variable.')
+    exit(1)
   try:
-    guild = discord.Object(id=1345135422094704731)
+    guild = discord.Object(id=id)
     synced = await bot.tree.sync(guild=guild)
-    print(f'Synced {len(synced)} commands to guild {guild.id}')
+    print(f'Synced {len(synced)} commands to guild')
 
   except Exception as e:
     print(f'Error syncing commands: {e}')
 
 
 # Define a slash commands
-
-GUILD_ID = discord.Object(id=1345135422094704731)
+id = os.getenv('SERVER_ID')
+if id is None:
+  print('Missing SERVER_ID environment variable.')
+  exit(1)
+GUILD_ID = discord.Object(id=id)
 
 
 # registers snipe, updates user values
@@ -162,6 +164,13 @@ async def leaderboard(interaction: discord.Interaction):
   leader = get_leaderboard()
   em = discord.Embed(title="Leaderboard :star2:", description="These are the top snipers in the server! Do your best to get here")
   index = 1
+
+  # for matching id to guild username
+  guild = interaction.guild
+  if guild is None:
+    print("Error: Guild not found.")
+    exit()
+  
   for person, score in leader:
     match index:
       case 1:
@@ -172,8 +181,14 @@ async def leaderboard(interaction: discord.Interaction):
         num = ":third_place:"
       case _:
         num = index
+
+    # get member from id
+    member = guild.get_member(int(person))
+    if member is None:
+      print(f"Error: Member with ID {person} not found.")
+      exit()
       
-    em.add_field(name=f"**{num}. {person}**", value=f'\t{score} pts', inline=False)
+    em.add_field(name=f"**{num}. {member.display_name}**", value=f'\t{score} pts', inline=False)
     index += 1
 
   await interaction.response.send_message(embed=em, ephemeral=True)
@@ -231,7 +246,7 @@ async def clear_db(interaction: discord.Interaction):
   cleardb()
   await interaction.response.send_message("Clearing database...")
 
-# manually grand points to users
+# manually grant points to users
 @bot.tree.command(name='give-points', description='manually add points to user', guild=GUILD_ID)
 @app_commands.checks.has_permissions(administrator=True)
 async def give_points(interaction: discord.Interaction, user: discord.Member, points: int):
@@ -252,11 +267,9 @@ async def on_tree_error(interaction: discord.Interaction, error: app_commands.Ap
         await interaction.response.send_message(f"An error occurred: {str(error)}", ephemeral=True)
         print(f"Error: {str(error)}")
 
-token = 0
-try:
-  token = os.getenv("DISCORD_BOT_TOKEN")
-except Exception as e:
-  print(f'DISCORD_BOT_TOKEN environment variable not found: {e}')
+token = os.getenv("DISCORD_BOT_TOKEN")
+if token is None:
+  print('DISCORD_BOT_TOKEN environment variable not found')
   exit(1)
 
 bot.run(token)
