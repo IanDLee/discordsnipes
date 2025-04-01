@@ -223,7 +223,7 @@ async def admin_help(interaction: discord.Interaction):
 @bot.tree.command(name='set-szn',
                   description='Set the hunting szn role!',
                   guild=GUILD_ID)
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
 async def set_szn(interaction: discord.Interaction, szn: discord.Role):
   await interaction.response.send_message(
       f":bangbang: Hunting Szn target is now {szn.mention}! :bangbang: \nAll {szn.name} are worth **double** points! You better hide! :index_pointing_at_the_viewer:")
@@ -233,7 +233,7 @@ async def set_szn(interaction: discord.Interaction, szn: discord.Role):
 @bot.tree.command(name='reset-values', 
                   description='Reset values for user', 
                   guild=GUILD_ID)
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
 async def reset_user_values(interaction: discord.Interaction, user: discord.Member):
   if type(interaction.user) is discord.Member:
     reset_values(user)
@@ -241,14 +241,14 @@ async def reset_user_values(interaction: discord.Interaction, user: discord.Memb
 
 # delete db values
 @bot.tree.command(name='clear-db', description='Clears ALL database values. Really make sure you want to do this before you do it', guild=GUILD_ID)
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
 async def clear_db(interaction: discord.Interaction):
   cleardb()
   await interaction.response.send_message("Clearing database...")
 
 # manually grant points to users
 @bot.tree.command(name='give-points', description='manually add points to user', guild=GUILD_ID)
-@app_commands.checks.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
 async def give_points(interaction: discord.Interaction, user: discord.Member, points: int):
   if type(interaction.user) is discord.Member:
     add_points(user, points)
