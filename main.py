@@ -1,11 +1,59 @@
 import discord
 import os
 import math
+import json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from discord.ext import commands
 from discord import app_commands
-from replit import db
-from replit.database import default_db
+
+db = {}
+
+def load_db(filename="snipes_data.json"):
+  global db
+  try:
+    with open(filename, "r") as f:
+      db = json.load(f)
+      print("Snipe data successfully loaded")
+  except (FileNotFoundError, json.JSONDecodeError):
+    print("No snipes data loaded")
+    db = {} 
+
+# undoes a snipe if it was invalid
+def undo_snipe(sniper: discord.Member, target: discord.Member, points: int):
+  sniper_key = db_get_user_key(sniper)
+  target_key = db_get_user_key(target)
+  db[sniper_key]['out'] -= 1
+  db[target_key]['in'] -= 1
+  db[sniper_key]['points'] -= points
+
+  store_database()
+
+# store entire replit db into json file
+def store_database(filename="snipes_data.json"):
+  temp_dict = {}
+  for key in db.keys():
+    temp_dict[key] = db[key]
+    
+  try:
+    with open(filename, "w") as f:
+      json.dump(temp_dict, f)
+  except Exception as e:
+    print(f"Error writing to file {filename}: {e}")
+
+def add_entry_to_file(key, value, filename="snipes_data.json"):
+  try:
+      with open(filename, "r") as file:
+          kv_db = json.load(file)  # Load existing data
+  except (FileNotFoundError, json.JSONDecodeError):
+      kv_db = {}  # Start fresh if file doesn't exist or is empty
+
+  kv_db[key] = value  # Update the dictionary
+
+  with open(filename, "w") as file:
+      json.dump(kv_db, file, indent=4)  # Rewrite the file with the new entry
 
 # increment user out value
 def increment_out(user: discord.Member):
@@ -60,6 +108,8 @@ def log_snipe(sniper: discord.Member, target: discord.Member):
   increment_out(sniper)
   increment_in(target)
 
+  store_database()
+    
   return value
   
 # check if user is in database and initialize user in database if not
@@ -105,9 +155,15 @@ def get_leaderboard():
   return leaderboard[:10]
 
 # delete all db values (including szn)
-def cleardb():
-  for key in db.keys():
-    del db[key]
+def cleardb(filename="snipes_data.json"):
+  global db
+  db = {}
+  
+  try:
+    with open(filename, "w") as f:
+      json.dump(db, f)
+  except Exception as e:
+    print(f"Error writing to file {filename}: {e}")
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
@@ -115,6 +171,7 @@ bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 @bot.event
 async def on_ready():
   print('Bot is running!')
+  load_db()
   id = os.getenv('SERVER_ID')
   if id is None:
     print('Missing SERVER_ID environment variable.')
@@ -216,6 +273,8 @@ async def admin_help(interaction: discord.Interaction):
   em.add_field(name="**/reset-values** *@user*", value="Resets all of a user's values to 0", inline=False)
   em.add_field(name="**/clear-db**", value="Clears all database values", inline=False)
   em.add_field(name="**/give-points** *@user* *points*", value="Gives a user points", inline=False)
+  em.add_field(name="**/store-db**", value="Manually store current instance database into json file", inline=False)
+  em.add_field(name="**/erase-snipe** *@sniper* *@target* *points", value="Removes points from sniper and resets internal in/out values", inline=False)
   
   await interaction.response.send_message(embed=em, ephemeral=True)
 
@@ -253,6 +312,20 @@ async def give_points(interaction: discord.Interaction, user: discord.Member, po
   if type(interaction.user) is discord.Member:
     add_points(user, points)
     await interaction.response.send_message(f"Gave {user.mention} {points} points. They now have {check_user_stats(user)[2]} points")
+
+# store database into json
+@bot.tree.command(name='store-db', description='store db into json file', guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def save_db(interaction: discord.Interaction):
+  store_database()
+  await interaction.response.send_message("Database saved!")
+
+# erase snipe
+@bot.tree.command(name='erase-snipe', description='erase a snipe if it was invalid', guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def erase_snipe(interaction: discord.Interaction, sniper: discord.Member, target: discord.Member, points: int):
+  undo_snipe(sniper, target, points)
+  await interaction.response.send_message(f"Erased {sniper.mention}'s snipe on {target.mention} for {points} points")
 
 # catch exceptions thrown during runtime
 @bot.tree.error
