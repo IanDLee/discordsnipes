@@ -352,11 +352,18 @@ async def erase_snipe(interaction: discord.Interaction, sniper: discord.Member, 
   await interaction.response.send_message(f"Erased {sniper.mention}'s snipe on {target.mention} for {points} points")
   print(f"{interaction.user.display_name} used {interaction.command.name}")
 
+# send json db to discord
 @bot.tree.command(name="get-json", description='send db json file', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def get_json(interaction: discord.Interaction):
   file = retrieve_json()
   await interaction.response.send_message(file=discord.File('snipes_data.json'), ephemeral=True)
+
+@bot.tree.command(name='kill-process', description='ends bot process', guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def kill_process(interaction: discord.Interaction):
+  await interaction.response.send_message("Killing bot process!", ephemeral=True)
+  exit(1)
 
 # @bot.tree.command(name="upload-json", description='upload json file to set as db', guild=GUILD_ID)
 # @app_commands.default_permissions(administrator=True)
