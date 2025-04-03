@@ -35,7 +35,7 @@ def undo_snipe(sniper: discord.Member, target: discord.Member, points: int):
   target_key = db_get_user_key(target)
   db[sniper_key]['out'] -= 1
   db[target_key]['in'] -= 1
-  db[sniper_key]['points'] -= points
+  db[sniper_key]['pts'] -= points
 
   store_database()
 
@@ -77,7 +77,7 @@ def increment_in(user: discord.Member):
 # add points to user
 def add_points(user: discord.Member, points: int):
   user_key = db_get_user_key(user)
-  db[user_key]['points'] += points
+  db[user_key]['pts'] += points
 
 # get raw (pre multiplier) value for a snipe
 def raw_snipe_value(out_count, in_count):
@@ -92,8 +92,8 @@ def get_raw_user_value(user: discord.Member):
 # get hunting szn (role id, multiplier) in tuple 
 def get_szn():
   if 'szn' not in db.keys():
-    db['szn'] = {"role_id":-1, "multiplier": 1}
-  return (db['szn']["role_id"], db['szn']['multiplier'])
+    db['szn'] = {"role_id":-1, "mlt": 1}
+  return (db['szn']["role_id"], db['szn']['mlt'])
 
 # determines if member has szn target role
 def is_szn_target(target: discord.Member):
@@ -128,7 +128,7 @@ def db_get_user_key(user: discord.Member):
   user_key = str(user.id)
   
   if user_key not in db.keys():
-    db[user_key] = {"out": 0, "in": 0, "points": 0}
+    db[user_key] = {"out": 0, "in": 0, "pts": 0}
   return user_key
     
 
@@ -136,11 +136,11 @@ def db_get_user_key(user: discord.Member):
 def check_user_stats(user: discord.Member):
   user_key = db_get_user_key(user)
   vals = db[user_key]
-  return vals['in'], vals['out'],vals['points']
+  return vals['in'], vals['out'],vals['pts']
 
 # set hunting szn target and target multiplier
 def set_hunting_szn(szn: discord.Role, multiplier: float):
-  db['szn'] = {"role_id":szn.id, "multiplier": multiplier}
+  db['szn'] = {"role_id":szn.id, "mlt": multiplier}
   
   store_database()
 
@@ -150,7 +150,7 @@ def reset_values(user_id: discord.Member):
   
   db[user_key]['out'] = 0
   db[user_key]['in'] = 0
-  db[user_key]['points'] = 0
+  db[user_key]['pts'] = 0
 
 # return point leaders (greater than 0) sorted 
 def get_leaderboard():
@@ -158,9 +158,9 @@ def get_leaderboard():
   for key in db.keys():
     if key == 'szn':
       continue
-    if db[key]['points'] > 0:
+    if db[key]['pts'] > 0:
       # retrieve nickname from user id
-      leaderboard.append((key, db[key]['points']))
+      leaderboard.append((key, db[key]['pts']))
   leaderboard.sort(key=lambda x: x[1], reverse=True)
   return leaderboard[:10]
 
