@@ -11,6 +11,14 @@ from discord import app_commands
 
 db = {}
 
+def retrieve_json(filename="snipes_data.json"):
+  try:
+    with open(filename, "rb") as f:
+      return f
+  except Exception as e:
+    print(f"Error opening file {filename}: {e}")
+
+# load saved db from json file into working db
 def load_db(filename="snipes_data.json"):
   global db
   try:
@@ -31,7 +39,7 @@ def undo_snipe(sniper: discord.Member, target: discord.Member, points: int):
 
   store_database()
 
-# store entire replit db into json file
+# store entire working db into json file
 def store_database(filename="snipes_data.json"):
   temp_dict = {}
   for key in db.keys():
@@ -43,6 +51,7 @@ def store_database(filename="snipes_data.json"):
   except Exception as e:
     print(f"Error writing to file {filename}: {e}")
 
+# adds a single entry to the json file
 def add_entry_to_file(key, value, filename="snipes_data.json"):
   try:
       with open(filename, "r") as file:
@@ -72,7 +81,7 @@ def add_points(user: discord.Member, points: int):
 
 # get raw (pre multiplier) value for a snipe
 def raw_snipe_value(out_count, in_count):
-  return 10 / (math.log10((in_count + 1) + (1 / (out_count + 1))))
+  return 10 / (math.log10((0.5*in_count + 1.3) + (1 / (out_count + 1))))
 
 # get raw (pre multiplier) value for a user
 def get_raw_user_value(user: discord.Member):
@@ -80,14 +89,15 @@ def get_raw_user_value(user: discord.Member):
   val = db[user_key]
   return raw_snipe_value(val['out'], val['in'])
 
-# get the current hunting season
+# get hunting szn (role id, multiplier) in tuple 
 def get_szn():
   if 'szn' not in db.keys():
-    db['szn'] = 0
-  return db['szn']
+    db['szn'] = {"role_id":-1, "multiplier": 1}
+  return (db['szn']["role_id"], db['szn']['multiplier'])
 
+# determines if member has szn target role
 def is_szn_target(target: discord.Member):
-  szn = get_szn()
+  szn = (get_szn())[0]
   role_ids = [role.id for role in target.roles]
   if szn in role_ids:
     return True
@@ -96,11 +106,10 @@ def is_szn_target(target: discord.Member):
 
 # log snipe (update snipe stats after snipe)
 def log_snipe(sniper: discord.Member, target: discord.Member):
-  HUNTING_SZN_MULT = 2
   value = get_raw_user_value(target)
   multiplier = 1
   if is_szn_target(target):
-    multiplier = HUNTING_SZN_MULT
+    multiplier = get_szn()[1]
 
   value = math.ceil(value * multiplier)
   # update values
@@ -129,9 +138,11 @@ def check_user_stats(user: discord.Member):
   vals = db[user_key]
   return vals['in'], vals['out'],vals['points']
 
-# set hunting szn target
-def set_hunting_szn(szn: discord.Role):
-  db['szn'] = szn.id
+# set hunting szn target and target multiplier
+def set_hunting_szn(szn: discord.Role, multiplier: float):
+  db['szn'] = {"role_id":szn.id, "multiplier": multiplier}
+  
+  store_database()
 
 # reset database values for user
 def reset_values(user_id: discord.Member):
@@ -148,7 +159,6 @@ def get_leaderboard():
     if key == 'szn':
       continue
     if db[key]['points'] > 0:
-      print(key)
       # retrieve nickname from user id
       leaderboard.append((key, db[key]['points']))
   leaderboard.sort(key=lambda x: x[1], reverse=True)
@@ -202,18 +212,24 @@ async def snipe(interaction: discord.Interaction, user: discord.Member):
     points_earned = log_snipe(interaction.user, user)
     bonus = ""
     if is_szn_target(user):
-      bonus = ":tada: You got a **hunting szn** target! **2x multiplier** applied! :tada:"
+      szn_multi = (get_szn())[1]
+      bonus = f":tada: You got a **hunting szn** target! **{szn_multi}x multiplier** applied! :tada:"
     await interaction.response.send_message(f":gun: Sniped {user.mention}! \n{bonus} **+{points_earned}** points\nYou now have **{check_user_stats(interaction.user)[2]}** points! ")
+    print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 
 # returns user stats
-@bot.tree.command(name='stats', description='Check your snipe stats!', guild=GUILD_ID)
-async def check_score(interaction: discord.Interaction):
-  if type(interaction.user) is discord.Member:
-    stats = check_user_stats(interaction.user)
-    await interaction.response.send_message(f":dart: Times targeted: **{stats[0]}**\n:gun: Snipes: **{stats[1]}**\n:moneybag: Points: **{stats[2]}**", ephemeral=True)
+@bot.tree.command(name='stats', description='Check your snipe stats! Optionally, you can check someone else\'s stats', guild=GUILD_ID)
+async def check_score(interaction: discord.Interaction, user: discord.Member=None):
+  if user is None:
+    user = interaction.user
+  if type(user) is discord.Member:
+    stats = check_user_stats(user)
+    await interaction.response.send_message(f"**{user.display_name}'s Snipe Stats**\n:dart: Times targeted: **{stats[0]}**\n:gun: Snipes: **{stats[1]}**\n:moneybag: Points: **{stats[2]}**", ephemeral=True)
+    print(f"{interaction.user.display_name} used {interaction.command.name}")
   else:
     await interaction.response.send_message("something broke")
+    
 
 # returns formatted leaderboard
 @bot.tree.command(name='leaderboard', description='Check the leaderboard!', guild=GUILD_ID)
@@ -249,6 +265,7 @@ async def leaderboard(interaction: discord.Interaction):
     index += 1
 
   await interaction.response.send_message(embed=em, ephemeral=True)
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
   
 @bot.tree.command(name='snipes-help', 
                   description='Help menu for all sniping related commands!', 
@@ -260,6 +277,7 @@ async def help(interaction: discord.Interaction):
   em.add_field(name="**:bar_chart: /leaderboard**", value="Check the leaderboard! This shows the top snipers in the server up to 10 who have any points", inline=False)
   em.add_field(name="**:question: /snipes-help**", value="Shows this menu lol", inline=False)
   await interaction.response.send_message(embed=em, ephemeral=True)
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # admin commands
 @bot.tree.command(name='admin-help', 
@@ -277,16 +295,18 @@ async def admin_help(interaction: discord.Interaction):
   em.add_field(name="**/erase-snipe** *@sniper* *@target* *points", value="Removes points from sniper and resets internal in/out values", inline=False)
   
   await interaction.response.send_message(embed=em, ephemeral=True)
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # set hunting szn
 @bot.tree.command(name='set-szn',
-                  description='Set the hunting szn role!',
+                  description='Set the hunting szn role and optional multiplier (default 2x).',
                   guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
-async def set_szn(interaction: discord.Interaction, szn: discord.Role):
+async def set_szn(interaction: discord.Interaction, szn: discord.Role, mult: float=2.0):
   await interaction.response.send_message(
-      f":bangbang: Hunting Szn target is now {szn.mention}! :bangbang: \nAll {szn.name} are worth **double** points! You better hide! :index_pointing_at_the_viewer:")
-  set_hunting_szn(szn)
+      f":bangbang: Hunting Szn target is now {szn.mention}! :bangbang: \nAll {szn.name} are worth **{mult}x** points! You better hide! :index_pointing_at_the_viewer:")
+  set_hunting_szn(szn, mult)
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # reset user values
 @bot.tree.command(name='reset-values', 
@@ -297,6 +317,7 @@ async def reset_user_values(interaction: discord.Interaction, user: discord.Memb
   if type(interaction.user) is discord.Member:
     reset_values(user)
     await interaction.response.send_message(f"Reset all values for {user.mention}")
+    print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # delete db values
 @bot.tree.command(name='clear-db', description='Clears ALL database values. Really make sure you want to do this before you do it', guild=GUILD_ID)
@@ -304,6 +325,7 @@ async def reset_user_values(interaction: discord.Interaction, user: discord.Memb
 async def clear_db(interaction: discord.Interaction):
   cleardb()
   await interaction.response.send_message("Clearing database...")
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # manually grant points to users
 @bot.tree.command(name='give-points', description='manually add points to user', guild=GUILD_ID)
@@ -312,6 +334,7 @@ async def give_points(interaction: discord.Interaction, user: discord.Member, po
   if type(interaction.user) is discord.Member:
     add_points(user, points)
     await interaction.response.send_message(f"Gave {user.mention} {points} points. They now have {check_user_stats(user)[2]} points")
+    print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # store database into json
 @bot.tree.command(name='store-db', description='store db into json file', guild=GUILD_ID)
@@ -319,6 +342,7 @@ async def give_points(interaction: discord.Interaction, user: discord.Member, po
 async def save_db(interaction: discord.Interaction):
   store_database()
   await interaction.response.send_message("Database saved!")
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # erase snipe
 @bot.tree.command(name='erase-snipe', description='erase a snipe if it was invalid', guild=GUILD_ID)
@@ -326,6 +350,21 @@ async def save_db(interaction: discord.Interaction):
 async def erase_snipe(interaction: discord.Interaction, sniper: discord.Member, target: discord.Member, points: int):
   undo_snipe(sniper, target, points)
   await interaction.response.send_message(f"Erased {sniper.mention}'s snipe on {target.mention} for {points} points")
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
+
+@bot.tree.command(name="get-json", description='send db json file', guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def get_json(interaction: discord.Interaction):
+  file = retrieve_json()
+  await interaction.response.send_message(file=discord.File('snipes_data.json'), ephemeral=True)
+
+# @bot.tree.command(name="upload-json", description='upload json file to set as db', guild=GUILD_ID)
+# @app_commands.default_permissions(administrator=True)
+# async def get_json(interaction: discord.Interaction, json: discord.File):
+#   global db
+#   db = json.load(json)
+#   await interaction.response.send_message(file="DB uploaded", ephemeral=True)
+
 
 # catch exceptions thrown during runtime
 @bot.tree.error
