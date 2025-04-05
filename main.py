@@ -86,8 +86,9 @@ def raw_snipe_value(out_count, in_count):
 # get raw (pre multiplier) value for a user
 def get_raw_user_value(user: discord.Member):
   user_key = db_get_user_key(user)
-  val = db[user_key]
-  return raw_snipe_value(val['out'], val['in'])
+  db_row = db[user_key]
+  raw_val = raw_snipe_value(db_row['out'], db_row['in'])
+  return max(raw_val, 15)
 
 # get hunting szn (role id, multiplier) in tuple 
 def get_szn():
@@ -208,7 +209,7 @@ def format_user_mentions(users: list[discord.Member]) -> str:
 
 def get_snipe_msg(targets: list[discord.Member]):
   if len(targets) == 1:
-    return f':gun: Sniped {targets[0]}!'
+    return f':gun: Sniped {targets[0].mention}!'
   else:
     msg = f':gun: Wow! Sniped {format_user_mentions(targets)}! **{get_combo_bonus(targets)}x combo bonus** applied :fire:' 
     return msg
