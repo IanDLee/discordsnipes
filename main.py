@@ -105,21 +105,31 @@ def is_szn_target(target: discord.Member):
     return False
 
 # log snipe (update snipe stats after snipe)
-def log_snipe(sniper: discord.Member, target: discord.Member):
-  value = get_raw_user_value(target)
-  multiplier = 1
-  if is_szn_target(target):
-    multiplier = get_szn()[1]
+def log_snipe(sniper: discord.Member, targets: list[discord.Member]):
+  # set bonus for combo
+  combo_bonus = get_combo_bonus(targets)
+  # mark point total
+  total = 0
+  # collect all szn targets
+  szn_targets = []
+  for user in targets:
+    value = get_raw_user_value(user)
+    multiplier = 1
+    if is_szn_target(user):
+      multiplier = get_szn()[1]
+      szn_targets.append(user)
 
-  value = math.ceil(value * multiplier)
+    value = math.ceil(value * multiplier * combo_bonus)
+    increment_out(sniper)
+    increment_in(user)
+    add_points(sniper, value)
+    
+    total += value
+    
   # update values
-  add_points(sniper, value)
-  increment_out(sniper)
-  increment_in(target)
-
   store_database()
     
-  return value
+  return total, szn_targets
   
 # check if user is in database and initialize user in database if not
 # returns key being used as user key for db
@@ -174,7 +184,46 @@ def cleardb(filename="snipes_data.json"):
       json.dump(db, f)
   except Exception as e:
     print(f"Error writing to file {filename}: {e}")
+    
+  # converts maybe users into list of users
+def parse_multi_snipes(*targets: list[discord.Member]) -> list[discord.Member]:
+  res = [target for target in targets if target is not None]
+  return res
 
+def get_combo_bonus(targets: list[discord.Member]):
+  vals = {1: 1, 2: 1.3, 3:1.4, 4: 1.45, 5: 1.5}
+  return vals[len(targets)]
+
+# returns a formatted string of user mentions from a list
+def format_user_mentions(users: list[discord.Member]) -> str:
+  # if only single person
+  if len(users) == 1:
+    return users[0].mention
+
+  ret_msg = ''
+  for u in users[:-1]:
+    ret_msg += f'{u.mention} '
+  ret_msg += f'and {users[-1].mention}'
+  return ret_msg
+
+def get_snipe_msg(targets: list[discord.Member]):
+  if len(targets) == 1:
+    return f':gun: Sniped {targets[0]}!'
+  else:
+    msg = f':gun: Wow! Sniped {format_user_mentions(targets)}! **{get_combo_bonus(targets)}x combo bonus** applied :fire:' 
+    return msg
+
+# create szn target message
+def get_szn_target_msg(szn_targets):
+  msg = ""
+  szn_multi = (get_szn())[1]
+  if len(szn_targets) == 1:
+    msg = f":tada: You got a **hunting szn** target! **{szn_multi}x multiplier** applied! :tada:"
+  elif len(szn_targets) > 1:
+    szn_target_list = format_user_mentions(szn_targets)
+    msg = f":tada: {szn_target_list} are **hunting szn** targets! **{szn_multi}x multiplier** applied to each! :tada:"
+  return msg
+  
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
 # bot startup code
@@ -205,17 +254,19 @@ GUILD_ID = discord.Object(id=id)
 
 # registers snipe, updates user values
 @bot.tree.command(name='snipe',
-                  description='Log a snipe for points!',
+                  description='Log a snipe for points! Up to five targets in one command.',
                   guild=GUILD_ID)
-async def snipe(interaction: discord.Interaction, user: discord.Member):
-  if type(interaction.user) is discord.Member:
-    points_earned = log_snipe(interaction.user, user)
-    bonus = ""
-    if is_szn_target(user):
-      szn_multi = (get_szn())[1]
-      bonus = f":tada: You got a **hunting szn** target! **{szn_multi}x multiplier** applied! :tada:"
-    await interaction.response.send_message(f":gun: Sniped {user.mention}! \n{bonus} **+{points_earned}** points\nYou now have **{check_user_stats(interaction.user)[2]}** points! ")
-    print(f"{interaction.user.display_name} used {interaction.command.name}")
+async def snipe(interaction: discord.Interaction, target: discord.Member, target2: discord.Member=None, target3: discord.Member=None, target4: discord.Member=None, target5:discord.Member=None):
+  targets = parse_multi_snipes(target, target2, target3, target4, target5)
+  points_earned, szn_targets = log_snipe(interaction.user, targets)
+  # creates a hunting szn message if there were any targets
+  szn_msg = get_szn_target_msg(szn_targets)
+  target_msg = get_snipe_msg(targets)
+
+  await interaction.response.send_message(f"{target_msg} \n{szn_msg} **+{points_earned}** points\nYou now have **{check_user_stats(interaction.user)[2]}** points! ")
+
+  
+  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 
 # returns user stats
@@ -272,7 +323,7 @@ async def leaderboard(interaction: discord.Interaction):
                   guild=GUILD_ID)
 async def help(interaction: discord.Interaction):
   em = discord.Embed(title="Help Menu", description="Here are all the commands for sniping and information")
-  em.add_field(name="**:gun: /snipe** *@user*", value="Log a snipe for points! Point value of a target is determined by number of times they have been sniped as well as number of snipes that have achieved.", inline=False)
+  em.add_field(name="**:gun: /snipe** *@user*", value="Log a snipe for points! Point value of a target is determined by number of times they have been sniped as well as number of snipes that have achieved. If you snipe a group, add up to 5 people in one command for a bonus. Must send multiple commands if there are more than 5.", inline=False)
   em.add_field(name="**:chart_with_upwards_trend: /stats**", value="Check your snipe stats! Tells you your snipe count, your target count, and your total points.", inline=False)
   em.add_field(name="**:bar_chart: /leaderboard**", value="Check the leaderboard! This shows the top snipers in the server up to 10 who have any points", inline=False)
   em.add_field(name="**:question: /snipes-help**", value="Shows this menu lol", inline=False)
