@@ -424,6 +424,10 @@ async def kill_process(interaction: discord.Interaction):
 #   db = json.load(json)
 #   await interaction.response.send_message(file="DB uploaded", ephemeral=True)
 
+@bot.tree.command(name='announce-bounty', description='announce bounty on (whatever you want) for (however much you want)', guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def announce_bounty(interaction: discord.Interaction, item: str, value: int):
+  await interaction.response.send_message(f":rotating_light: Random bounty alert! :rotating_light\n First person to get a picture of **{item}** will receive {value} points! @everyone!")
 
 # catch exceptions thrown during runtime
 @bot.tree.error
