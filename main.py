@@ -81,14 +81,19 @@ def add_points(user: discord.Member, points: int):
 
 # get raw (pre multiplier) value for a snipe
 def raw_snipe_value(out_count, in_count):
-  return 10 / (math.log10((0.5*in_count + 1.3) + (1 / (out_count + 1))))
+  #return 10 / (math.log10((0.5*in_count + 1.3) + (1 / (out_count + 1))))
+  return (math.log(out_count + 2) / math.log(in_count + 2))*20
+  #return 10 / math.log10((0.5 * in_count + 1.3) + (1 / math.sqrt(out_count + 1)))
 
 # get raw (pre multiplier) value for a user
 def get_raw_user_value(user: discord.Member):
+  
+  FLOOR_VALUE = 10
+  
   user_key = db_get_user_key(user)
   db_row = db[user_key]
   raw_val = raw_snipe_value(db_row['out'], db_row['in'])
-  return max(raw_val, 15)
+  return max(raw_val, FLOOR_VALUE)
 
 # get hunting szn (role id, multiplier) in tuple 
 def get_szn():
@@ -162,6 +167,8 @@ def reset_values(user_id: discord.Member):
   db[user_key]['out'] = 0
   db[user_key]['in'] = 0
   db[user_key]['pts'] = 0
+  
+  store_database()
 
 # return point leaders (greater than 0) sorted 
 def get_leaderboard():
