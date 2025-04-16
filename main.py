@@ -2,6 +2,7 @@ import discord
 import os
 import math
 import json
+import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,6 +11,79 @@ from discord.ext import commands
 from discord import app_commands
 
 db = {}
+bounty_board = []
+
+def opt_out(user: discord.Member):
+  user_key = db_get_user_key(user)
+  
+  pts = db[user_key]['pts']
+  
+  if pts == 0:
+    db[user_key]['pts'] = -1
+  elif pts > 0:
+    db[user_key]['pts'] *= -1
+  store_database()
+  
+def opt_back_in(user: discord.Member):
+  user_key = db_get_user_key(user)
+  
+  pts = db[user_key]['pts']
+
+  if pts < 0:
+    db[user_key]['pts'] *= -1
+    store_database()
+    
+def is_opted_out(user: discord.Member):
+  user_key = db_get_user_key(user)
+  pts = db[user_key]['pts']
+  
+  return pts < 0
+
+def get_bounty_board():
+  em = discord.Embed(title="Bounty Board :pencil:", description="Here are all of the active and unclaimed bounties")
+  index = 1
+  for bounty in bounty_board:
+    item = bounty['item']
+    val = bounty['val']
+    desc = bounty['desc']
+    em.add_field(name=f"**{index}. {item} | {val} pts**", value=f'\t{desc}', inline=False)
+    index += 1
+  return em
+
+def create_bounty(name: str, value: int, description: str=None):
+  if description is None:
+    description = f"Get a picture of {name}"
+  bounty_board.append({'item': name, 'val': value, 'desc': description})
+  save_bounty_board()
+  
+def save_bounty_board(filename="bounty_board.json"):
+  try:
+    with open(filename, "w") as f:
+      json.dump(bounty_board, f)
+  except Exception as e:
+    print(f"Error writing to file {filename}: {e}")
+    
+def load_bounty_board(filename="bounty_board.json"):
+  global bounty_board
+  try:
+    with open(filename, "r") as f:
+      bounty_board = json.load(f)
+      print("Bounty board successfully loaded")
+  except (FileNotFoundError, json.JSONDecodeError):
+    print("No bounty board loaded")
+    bounty_board = []
+    
+def log_bounty(bounty: int, user: discord.Member) -> dict:
+  global bounty_board
+  if bounty > len(bounty_board) or bounty <= 0:
+    return None
+  
+  val = bounty_board[bounty-1]['val']
+  add_points(user, val)
+  entry = bounty_board.pop(bounty-1)
+  save_bounty_board()
+  return entry
+  
 
 def retrieve_json(filename="snipes_data.json"):
   try:
@@ -180,7 +254,39 @@ def get_leaderboard():
       # retrieve nickname from user id
       leaderboard.append((key, db[key]['pts']))
   leaderboard.sort(key=lambda x: x[1], reverse=True)
-  return leaderboard[:10]
+  return leaderboard[:5]
+
+def create_leader_board_embed(interaction: discord.Interaction):
+  leader = get_leaderboard()
+  em = discord.Embed(title="Leaderboard :star2:", description="These are the top snipers in the server! Do your best to get here")
+  index = 1
+
+  # for matching id to guild username
+  guild = interaction.guild
+  if guild is None:
+    print("Error: Guild not found.")
+    exit()
+  
+  for person, score in leader:
+    match index:
+      case 1:
+        num = ":first_place:"
+      case 2:
+        num = ":second_place:"
+      case 3:
+        num = ":third_place:"
+      case _:
+        num = index
+
+    # get member from id
+    member = guild.get_member(int(person))
+    if member is None:
+      print(f"Error: Member with ID {person} not found.")
+      exit()
+      
+    em.add_field(name=f"**{num}. {member.display_name}**", value=f'\t{score} pts', inline=False)
+    index += 1
+  return em
 
 # delete all db values (including szn)
 def cleardb(filename="snipes_data.json"):
@@ -232,13 +338,16 @@ def get_szn_target_msg(szn_targets):
     msg = f":tada: {szn_target_list} are **hunting szn** targets! **{szn_multi}x multiplier** applied to each! :tada:"
   return msg
   
+def log_command(interaction: discord.Interaction):
+  print(f"[{datetime.datetime.now()}] {interaction.user.display_name} used {interaction.command.name}")
+
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
 # bot startup code
 @bot.event
 async def on_ready():
-  print('Bot is running!')
   load_db()
+  load_bounty_board()
   id = os.getenv('SERVER_ID')
   if id is None:
     print('Missing SERVER_ID environment variable.')
@@ -247,6 +356,7 @@ async def on_ready():
     guild = discord.Object(id=id)
     synced = await bot.tree.sync(guild=guild)
     print(f'Synced {len(synced)} commands to guild')
+    print(f'[{datetime.datetime.now()}] Bot now running!')
 
   except Exception as e:
     print(f'Error syncing commands: {e}')
@@ -259,13 +369,31 @@ if id is None:
   exit(1)
 GUILD_ID = discord.Object(id=id)
 
+@bot.tree.command(name='opt-out', description='Opt out of snipe game. Potential snipers will be asked to delete photo(s).', guild=GUILD_ID)
+async def snipes_opt_out(interaction: discord.Interaction):
+  log_command(interaction)
+
+  opt_out(interaction.user)
+  await interaction.response.send_message(f'You have opted out of sniping. If someone attempts to snipe you, they will be asked to remove the photo. Feel free to ask any moderator to opt you back in any time.', ephemeral=True)
 
 # registers snipe, updates user values
 @bot.tree.command(name='snipe',
                   description='Log a snipe for points! Up to five targets in one command.',
                   guild=GUILD_ID)
 async def snipe(interaction: discord.Interaction, target: discord.Member, target2: discord.Member=None, target3: discord.Member=None, target4: discord.Member=None, target5:discord.Member=None):
+  log_command(interaction)
+  
+  if is_opted_out(interaction.user):
+    await interaction.response.send_message(f'You have opted out of the snipes game. Please contact a moderator to opt back in to use this command', ephemeral=True)
+    return
+  
   targets = parse_multi_snipes(target, target2, target3, target4, target5)
+  
+  for target in targets:
+    if is_opted_out(target):
+      await interaction.response.send_message(f"A target you sniped has opted out of sniping. Please remove the image as soon as possible.", ephemeral=True)
+      return
+  
   points_earned, szn_targets = log_snipe(interaction.user, targets)
   # creates a hunting szn message if there were any targets
   szn_msg = get_szn_target_msg(szn_targets)
@@ -273,70 +401,81 @@ async def snipe(interaction: discord.Interaction, target: discord.Member, target
 
   await interaction.response.send_message(f"{target_msg} \n{szn_msg} **+{points_earned}** points\nYou now have **{check_user_stats(interaction.user)[2]}** points! ")
 
-  
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
-
 
 # returns user stats
 @bot.tree.command(name='stats', description='Check your snipe stats! Optionally, you can check someone else\'s stats', guild=GUILD_ID)
 async def check_score(interaction: discord.Interaction, user: discord.Member=None):
+  log_command(interaction)
+
   if user is None:
     user = interaction.user
+
+  if is_opted_out(user):
+    await interaction.response.send_message(f'{user.display_name} has opted out of the snipes game.', ephemeral=True)
+    return
+  
   if type(user) is discord.Member:
     stats = check_user_stats(user)
     await interaction.response.send_message(f"**{user.display_name}'s Snipe Stats**\n:dart: Times targeted: **{stats[0]}**\n:gun: Snipes: **{stats[1]}**\n:moneybag: Points: **{stats[2]}**", ephemeral=True)
-    print(f"{interaction.user.display_name} used {interaction.command.name}")
   else:
     await interaction.response.send_message("something broke")
     
 
 # returns formatted leaderboard
-@bot.tree.command(name='leaderboard', description='Check the leaderboard!', guild=GUILD_ID)
+@bot.tree.command(name='leaderboard', 
+                  description='Check the leaderboard!', 
+                  guild=GUILD_ID)
 async def leaderboard(interaction: discord.Interaction):
-  leader = get_leaderboard()
-  em = discord.Embed(title="Leaderboard :star2:", description="These are the top snipers in the server! Do your best to get here")
-  index = 1
-
-  # for matching id to guild username
-  guild = interaction.guild
-  if guild is None:
-    print("Error: Guild not found.")
-    exit()
-  
-  for person, score in leader:
-    match index:
-      case 1:
-        num = ":first_place:"
-      case 2:
-        num = ":second_place:"
-      case 3:
-        num = ":third_place:"
-      case _:
-        num = index
-
-    # get member from id
-    member = guild.get_member(int(person))
-    if member is None:
-      print(f"Error: Member with ID {person} not found.")
-      exit()
-      
-    em.add_field(name=f"**{num}. {member.display_name}**", value=f'\t{score} pts', inline=False)
-    index += 1
-
+  log_command(interaction)
+  em = create_leader_board_embed(interaction)
   await interaction.response.send_message(embed=em, ephemeral=True)
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
+  
+@bot.tree.command(name='bounty-board', 
+                  description='Show board of active bounties', 
+                  guild=GUILD_ID)
+async def show_bounties(interaction: discord.Interaction):
+  log_command(interaction)
+  em = get_bounty_board()
+  await interaction.response.send_message(embed=em, ephemeral=True)
+  
+@bot.tree.command(name='claim-bounty', 
+                  description='Claim bounty based on the index in the bounty board!', 
+                  guild=GUILD_ID)
+async def claim_bounty(interaction: discord.Interaction, bounty_num: int):
+  log_command(interaction)
+  
+  if is_opted_out(interaction.user):
+    await interaction.response.send_message(f'You have opted out of the snipes game. Please contact a moderator to opt back in to use this command', ephemeral=True)
+    return
+  
+  bounty_info = log_bounty(bounty_num, interaction.user)
+  
+  if bounty_info is None:
+    await interaction.response.send_message(f':bangbang: **! Error !** Not a valid bounty :bangbang:')
+    return
+  
+  item = bounty_info['item']
+  val = bounty_info['val']
+  
+  await interaction.response.send_message(f':tada: Claimed bounty on **{item}** for **{val} pts!**:tada:\nYou now have **{check_user_stats(interaction.user)[2]}** points!')
+
+
   
 @bot.tree.command(name='snipes-help', 
                   description='Help menu for all sniping related commands!', 
                   guild=GUILD_ID)
 async def help(interaction: discord.Interaction):
+  log_command(interaction)
   em = discord.Embed(title="Help Menu", description="Here are all the commands for sniping and information")
   em.add_field(name="**:gun: /snipe** *@user*", value="Log a snipe for points! Point value of a target is determined by number of times they have been sniped as well as number of snipes that have achieved. If you snipe a group, add up to 5 people in one command for a bonus. Must send multiple commands if there are more than 5.", inline=False)
   em.add_field(name="**:chart_with_upwards_trend: /stats**", value="Check your snipe stats! Tells you your snipe count, your target count, and your total points.", inline=False)
-  em.add_field(name="**:bar_chart: /leaderboard**", value="Check the leaderboard! This shows the top snipers in the server up to 10 who have any points", inline=False)
+  em.add_field(name="**:bar_chart: /leaderboard**", value="Check the leaderboard! This shows the top snipers in the server up to 5 who have any points", inline=False)
+  em.add_field(name='**:pencil: /bounty-board**', value="Gets the bounty board, which contains all active bounties.", inline=False)
+  em.add_field(name="**:money_bag: /claim-bounty *bounty_num*", value="Claims the bounty at the bounty_num spot!", inline=False)
+  em.add_field(name="**:flag_white: /opt-out**", value="Opts you out of snipes game. People will no longer be able to snipe you for points, and you will no longer be participating in the snipes game", inline=False)
   em.add_field(name="**:question: /snipes-help**", value="Shows this menu lol", inline=False)
+  
   await interaction.response.send_message(embed=em, ephemeral=True)
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # admin commands
 @bot.tree.command(name='admin-help', 
@@ -344,6 +483,7 @@ async def help(interaction: discord.Interaction):
                   guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def admin_help(interaction: discord.Interaction):
+  log_command(interaction)
   em = discord.Embed(title="Admin Help Menu", description="Here are all the admin commands for sniping")
   
   em.add_field(name="**/set-hunting-szn** *@role*", value="Sets the hunting szn target role", inline=False)
@@ -354,7 +494,19 @@ async def admin_help(interaction: discord.Interaction):
   em.add_field(name="**/erase-snipe** *@sniper* *@target* *points", value="Removes points from sniper and resets internal in/out values", inline=False)
   
   await interaction.response.send_message(embed=em, ephemeral=True)
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
+
+#opt a user back in
+@bot.tree.command(name='opt-in', 
+                  description='Opt a user back into sniping!', 
+                  guild=GUILD_ID)
+@app_commands.default_permissions(administrator=True)
+async def snipes_opt_in(interaction: discord.Interaction, user: discord.Member=None):
+  log_command(interaction)
+  target = interaction.user
+  if user is not None:
+    target = user
+  opt_back_in(target)
+  await interaction.response.send_message(f'You have successfully opted {user.display_name} back into sniping!', ephemeral=True)
 
 # set hunting szn
 @bot.tree.command(name='set-szn',
@@ -362,10 +514,10 @@ async def admin_help(interaction: discord.Interaction):
                   guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def set_szn(interaction: discord.Interaction, szn: discord.Role, mult: float=2.0):
+  log_command(interaction)
   await interaction.response.send_message(
       f":bangbang: Hunting Szn target is now {szn.mention}! :bangbang: \nAll {szn.name} are worth **{mult}x** points! You better hide! :index_pointing_at_the_viewer:")
   set_hunting_szn(szn, mult)
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # reset user values
 @bot.tree.command(name='reset-values', 
@@ -373,55 +525,59 @@ async def set_szn(interaction: discord.Interaction, szn: discord.Role, mult: flo
                   guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def reset_user_values(interaction: discord.Interaction, user: discord.Member):
+  log_command(interaction)
   if type(interaction.user) is discord.Member:
     reset_values(user)
     await interaction.response.send_message(f"Reset all values for {user.mention}")
-    print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # delete db values
 @bot.tree.command(name='clear-db', description='Clears ALL database values. Really make sure you want to do this before you do it', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def clear_db(interaction: discord.Interaction):
+  log_command(interaction)
   cleardb()
   await interaction.response.send_message("Clearing database...")
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # manually grant points to users
 @bot.tree.command(name='give-points', description='manually add points to user', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def give_points(interaction: discord.Interaction, user: discord.Member, points: int):
+  log_command(interaction)
   if type(interaction.user) is discord.Member:
     add_points(user, points)
     await interaction.response.send_message(f"Gave {user.mention} {points} points. They now have {check_user_stats(user)[2]} points")
-    print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # store database into json
 @bot.tree.command(name='store-db', description='store db into json file', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def save_db(interaction: discord.Interaction):
+  log_command(interaction)
   store_database()
   await interaction.response.send_message("Database saved!")
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # erase snipe
 @bot.tree.command(name='erase-snipe', description='erase a snipe if it was invalid', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def erase_snipe(interaction: discord.Interaction, sniper: discord.Member, target: discord.Member, points: int):
+  log_command(interaction)
   undo_snipe(sniper, target, points)
   await interaction.response.send_message(f"Erased {sniper.mention}'s snipe on {target.mention} for {points} points")
-  print(f"{interaction.user.display_name} used {interaction.command.name}")
 
 # send json db to discord
 @bot.tree.command(name="get-json", description='send db json file', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def get_json(interaction: discord.Interaction):
-  file = retrieve_json()
+  log_command(interaction)
+  #file = retrieve_json()
   await interaction.response.send_message(file=discord.File('snipes_data.json'), ephemeral=True)
+
 
 @bot.tree.command(name='kill-process', description='ends bot process', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
 async def kill_process(interaction: discord.Interaction):
+  log_command(interaction)
   await interaction.response.send_message("Killing bot process!", ephemeral=True)
+
   exit(1)
 
 # @bot.tree.command(name="upload-json", description='upload json file to set as db', guild=GUILD_ID)
@@ -431,10 +587,14 @@ async def kill_process(interaction: discord.Interaction):
 #   db = json.load(json)
 #   await interaction.response.send_message(file="DB uploaded", ephemeral=True)
 
-@bot.tree.command(name='create-bounty', description='announce bounty on (whatever you want) for (however much you want)', guild=GUILD_ID)
+@bot.tree.command(name='create-bounty', description='announce bounty. Add a helpful description if needed', guild=GUILD_ID)
 @app_commands.default_permissions(administrator=True)
-async def announce_bounty(interaction: discord.Interaction, item: str, value: int):
+async def announce_bounty(interaction: discord.Interaction, item: str, value: int, description: str=None):
+  log_command(interaction)
+  create_bounty(item, value, description) 
+  
   await interaction.response.send_message(f":rotating_light: ** BOUNTY ALERT **:rotating_light:  \n\n :bangbang: @here First person to get a picture of **{item}** will receive **{value}** points :bangbang:", allowed_mentions=discord.AllowedMentions(everyone=True))
+
 
 # catch exceptions thrown during runtime
 @bot.tree.error
