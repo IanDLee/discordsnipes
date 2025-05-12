@@ -12,6 +12,7 @@ from discord import app_commands
 
 db = {}
 bounty_board = []
+GLOBAL_MULT = 10
 
 def opt_out(user: discord.Member):
   user_key = db_get_user_key(user)
@@ -199,7 +200,7 @@ def log_snipe(sniper: discord.Member, targets: list[discord.Member]):
       multiplier = get_szn()[1]
       szn_targets.append(user)
 
-    value = math.ceil(value * multiplier * combo_bonus)
+    value = math.ceil(value * multiplier * combo_bonus * GLOBAL_MULT)
     increment_out(sniper)
     increment_in(user)
     add_points(sniper, value)
